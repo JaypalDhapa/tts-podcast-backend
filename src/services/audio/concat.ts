@@ -36,7 +36,7 @@ export async function concatenateAudio(buffers: Buffer[]): Promise<{ buffer: Buf
     }
 
     const outputPath = path.join(workDir, `${crypto.randomUUID()}.mp3`);
-    await runFfmpegConcat(inputPaths, outputPath);
+    await runFfmpegConcat(inputPaths, outputPath, 0.6);
 
     const buffer = await fs.readFile(outputPath);
     const duration = await probeDuration(buffer);
@@ -46,16 +46,26 @@ export async function concatenateAudio(buffers: Buffer[]): Promise<{ buffer: Buf
   }
 }
 
-function runFfmpegConcat(inputPaths: string[], outputPath: string): Promise<void> {
+function runFfmpegConcat(inputPaths: string[], outputPath: string, gapSeconds = 0.6): Promise<void> {
   return new Promise((resolve, reject) => {
     const command = ffmpeg();
     inputPaths.forEach((p) => command.input(p));
 
-    const filterInputs = inputPaths.map((_, i) => `[${i}:a]`).join("");
-    const filter = `${filterInputs}concat=n=${inputPaths.length}:v=0:a=1[out]`;
+    // Insert `gapSeconds` of silence between each clip (not before the
+    // first or after the last) so blocks don't run into each other.
+    const silenceLabel = "sil";
+    const filterParts = [`aevalsrc=0:d=${gapSeconds}[${silenceLabel}]`];
+
+    const segments: string[] = [];
+    inputPaths.forEach((_, i) => {
+      segments.push(`[${i}:a]`);
+      if (i < inputPaths.length - 1) segments.push(`[${silenceLabel}]`);
+    });
+
+    filterParts.push(`${segments.join("")}concat=n=${segments.length}:v=0:a=1[out]`);
 
     command
-      .complexFilter(filter)
+      .complexFilter(filterParts.join(";"))
       .outputOptions(["-map", "[out]"])
       .audioCodec("libmp3lame")
       .audioBitrate("128k")

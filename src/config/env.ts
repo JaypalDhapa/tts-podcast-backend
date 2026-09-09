@@ -36,6 +36,13 @@ const envSchema = z.object({
   // unset to fall back to the B2 friendly URL directly.
   B2_PUBLIC_BASE_URL: z.string().url().optional(),
 
+    // Optional: enables real Cloudflare cache purging on permanent delete.
+  // Required only if you're serving audio through a Cloudflare-proxied
+  // custom domain (not needed for a bare *.workers.dev URL, which can't
+  // be purged this way — see cachePurge.ts).
+  CLOUDFLARE_API_TOKEN: z.string().optional(),
+  CLOUDFLARE_ZONE_ID: z.string().optional(),
+
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
 });
 
