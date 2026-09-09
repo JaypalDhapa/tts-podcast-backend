@@ -1,9 +1,9 @@
 import { parseBuffer } from "music-metadata";
 import { synthesizeWithElevenLabs } from "./elevenlabs";
 import { synthesizeWithCartesia } from "./cartesia";
-import { ProviderCredential } from "../../models/ProviderCredential";
+import { acquireKey, classifyFailure, reportKeyFailure, reportKeySuccess } from "./keyManager";
+import { TTSProviderError } from "./TTSProviderError";
 import { Voice } from "../../models/Voice";
-import { decryptSecret } from "../crypto";
 import type { TTSProvider, TTSSettings } from "../../types/domain";
 import { ApiError } from "../../utils/apiError";
 
@@ -11,6 +11,8 @@ export interface SynthesisResult {
   buffer: Buffer;
   duration: number;
 }
+
+const MAX_ATTEMPTS = 3;
 
 export async function synthesizeBlock(params: {
   provider: TTSProvider;
@@ -24,17 +26,7 @@ export async function synthesizeBlock(params: {
     throw new ApiError(400, "Cannot synthesize empty text.");
   }
 
-  const [credential, voice] = await Promise.all([
-    ProviderCredential.findOne({ provider }),
-    Voice.findById(voiceId).catch(() => null),
-  ]);
-
-  if (!credential) {
-    throw new ApiError(
-      422,
-      `No API key configured for ${providerLabel(provider)}. Add one in Settings → API Keys.`
-    );
-  }
+  const voice = await Voice.findById(voiceId).catch(() => null);
   if (!voice) {
     throw new ApiError(422, "This block's voice no longer exists. Pick a different voice.");
   }
@@ -42,24 +34,44 @@ export async function synthesizeBlock(params: {
     throw new ApiError(422, "This block's voice doesn't match its provider.");
   }
 
-  const apiKey = decryptSecret(credential.encryptedKey);
+  const excludeIds: string[] = [];
+  let lastErrorMessage = "Unknown error.";
 
-  let buffer: Buffer;
-  try {
-    buffer =
-      provider === "elevenlabs"
-        ? await synthesizeWithElevenLabs({ apiKey, providerVoiceId: voice.providerVoiceId, text, settings })
-        : await synthesizeWithCartesia({ apiKey, providerVoiceId: voice.providerVoiceId, text, settings });
-  } catch (err) {
-    throw new ApiError(
-      502,
-      `${providerLabel(provider)} voice generation failed. Please verify the configured API key and voice ID.`,
-      err instanceof Error ? err.message : undefined
-    );
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    // Throws ApiError(422, ...) immediately if the pool has nothing
+    // available — that's not worth retrying, so let it propagate.
+    const key = await acquireKey(provider, excludeIds);
+
+    
+    try {
+      const buffer =
+        provider === "elevenlabs"
+          ? await synthesizeWithElevenLabs({ apiKey: key.apiKey, providerVoiceId: voice.providerVoiceId, text, settings })
+          : await synthesizeWithCartesia({ apiKey: key.apiKey, providerVoiceId: voice.providerVoiceId, text, settings });
+
+      await reportKeySuccess(key.id);
+      const duration = await probeDuration(buffer);
+      return { buffer, duration };
+    } catch (err) {
+      const status = err instanceof TTSProviderError ? err.status : undefined;
+      const classification = classifyFailure(status);
+      const message = err instanceof Error ? err.message : "Synthesis failed.";
+
+      await reportKeyFailure(key.id, classification, message);
+      excludeIds.push(key.id);
+      lastErrorMessage = message;
+
+      // An invalid/expired key is worth retrying with a different one;
+      // so is a rate limit or a transient error. We just cap how many
+      // times we'll try before giving up.
+    }
   }
 
-  const duration = await probeDuration(buffer);
-  return { buffer, duration };
+  throw new ApiError(
+    502,
+    `${providerLabel(provider)} voice generation failed after ${MAX_ATTEMPTS} attempts. Please check your configured API keys.`,
+    lastErrorMessage
+  );
 }
 
 async function probeDuration(buffer: Buffer): Promise<number> {

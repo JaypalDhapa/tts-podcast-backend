@@ -1,4 +1,5 @@
 import type { TTSSettings } from "../../types/domain";
+import { TTSProviderError } from "./TTSProviderError";
 
 interface SynthesizeParams {
   apiKey: string;
@@ -7,10 +8,6 @@ interface SynthesizeParams {
   settings: TTSSettings;
 }
 
-/**
- * Calls Cartesia's TTS bytes endpoint and returns raw MP3 bytes.
- * https://docs.cartesia.ai/api-reference/tts/bytes
- */
 export async function synthesizeWithCartesia({ apiKey, providerVoiceId, text, settings }: SynthesizeParams): Promise<Buffer> {
   const response = await fetch("https://api.cartesia.ai/tts/bytes", {
     method: "POST",
@@ -29,16 +26,12 @@ export async function synthesizeWithCartesia({ apiKey, providerVoiceId, text, se
         bit_rate: 128000,
         sample_rate: 44100,
       },
-      // Removed top-level `speed` — Cartesia's schema rejects unknown
-      // top-level fields with an unhelpful 400. Speed control needs a
-      // different nested shape (voice.experimental_controls); left out
-      // for now until confirmed against current API docs.
     }),
   });
 
   if (!response.ok) {
     const body = await safeReadError(response);
-    throw new Error(`Cartesia synthesis failed (${response.status}): ${body}`);
+    throw new TTSProviderError(response.status, `Cartesia synthesis failed (${response.status}): ${body}`);
   }
 
   const arrayBuffer = await response.arrayBuffer();

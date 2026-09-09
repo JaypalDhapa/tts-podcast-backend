@@ -1,4 +1,5 @@
 import type { TTSSettings } from "../../types/domain";
+import { TTSProviderError } from "./TTSProviderError";
 
 interface SynthesizeParams {
   apiKey: string;
@@ -7,10 +8,6 @@ interface SynthesizeParams {
   settings: TTSSettings;
 }
 
-/**
- * Calls ElevenLabs' text-to-speech endpoint and returns raw MP3 bytes.
- * https://elevenlabs.io/docs/api-reference/text-to-speech
- */
 export async function synthesizeWithElevenLabs({ apiKey, providerVoiceId, text, settings }: SynthesizeParams): Promise<Buffer> {
   const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(providerVoiceId)}`;
 
@@ -18,8 +15,6 @@ export async function synthesizeWithElevenLabs({ apiKey, providerVoiceId, text, 
     stability: 0.5,
     similarity_boost: 0.75,
   };
-  // Speed is only honored by newer ElevenLabs models (e.g. eleven_v3);
-  // older models silently ignore it, so it's safe to always include.
   if (typeof settings.speed === "number") {
     voiceSettings.speed = clamp(settings.speed, 0.7, 1.2);
   }
@@ -40,7 +35,7 @@ export async function synthesizeWithElevenLabs({ apiKey, providerVoiceId, text, 
 
   if (!response.ok) {
     const body = await safeReadError(response);
-    throw new Error(`ElevenLabs synthesis failed (${response.status}): ${body}`);
+    throw new TTSProviderError(response.status, `ElevenLabs synthesis failed (${response.status}): ${body}`);
   }
 
   const arrayBuffer = await response.arrayBuffer();
@@ -48,11 +43,12 @@ export async function synthesizeWithElevenLabs({ apiKey, providerVoiceId, text, 
 }
 
 async function safeReadError(response: Response): Promise<string> {
+  const raw = await response.text();
   try {
-    const json = (await response.json()) as any;
-    return json?.detail?.message ?? JSON.stringify(json);
+    const json = JSON.parse(raw);
+    return json?.detail?.message ?? raw;
   } catch {
-    return response.statusText;
+    return raw || response.statusText;
   }
 }
 
