@@ -42,7 +42,8 @@ export async function synthesizeBlock(params: {
     // available — that's not worth retrying, so let it propagate.
     const key = await acquireKey(provider, excludeIds);
 
-    
+    console.log(`[TTS] Using ${provider} key ${key.id} (attempt ${attempt}/${MAX_ATTEMPTS})`);
+
     try {
       const buffer =
         provider === "elevenlabs"
@@ -57,6 +58,7 @@ export async function synthesizeBlock(params: {
       const classification = classifyFailure(status);
       const message = err instanceof Error ? err.message : "Synthesis failed.";
 
+      console.error(`[TTS] Failed on ${provider} key ${key.id}:`, message);
       await reportKeyFailure(key.id, classification, message);
       excludeIds.push(key.id);
       lastErrorMessage = message;

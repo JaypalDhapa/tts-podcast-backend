@@ -32,3 +32,11 @@ export interface PodcastAudio {
   url: string;
   duration: number;
 }
+
+export interface KeyCredits {
+  supported: boolean;
+  used: number | null;
+  limit: number | null;
+  remaining: number | null;
+  resetAt: string | null;
+}

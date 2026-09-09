@@ -1,7 +1,10 @@
+// src/controllers/providerKey.controller.ts
+
 import type { Request, Response } from "express";
 import { z } from "zod";
 import { ProviderApiKey } from "../models/ProviderApiKey";
-import { encryptSecret } from "../services/crypto";
+import { encryptSecret, decryptSecret } from "../services/crypto";
+import { fetchElevenLabsCredits, fetchCartesiaCredits } from "../services/tts/credits";
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../utils/asyncHandler";
 
@@ -56,4 +59,19 @@ export const deleteKey = asyncHandler(async (req: Request, res: Response) => {
   const key = await ProviderApiKey.findByIdAndDelete(req.params.id);
   if (!key) throw new ApiError(404, "API key not found.");
   res.status(204).send();
+});
+
+/** GET /api/provider-keys/:id/credits — decrypts the key server-side and checks balance with provider. */
+export const getKeyCredits = asyncHandler(async (req: Request, res: Response) => {
+  const doc = await ProviderApiKey.findById(req.params.id);
+  if (!doc) throw new ApiError(404, "API key not found.");
+
+  const apiKey = decryptSecret(doc.encryptedKey);
+
+  const credits =
+    doc.provider === "elevenlabs"
+      ? await fetchElevenLabsCredits(apiKey)
+      : await fetchCartesiaCredits(apiKey);
+
+  res.json(credits);
 });
