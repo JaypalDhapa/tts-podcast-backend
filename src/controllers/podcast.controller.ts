@@ -5,6 +5,9 @@ import { PodcastVersion } from "../models/PodcastVersion";
 import { AppSettings, APP_SETTINGS_ID } from "../models/AppSettings";
 import { ApiError } from "../utils/apiError";
 import { asyncHandler } from "../utils/asyncHandler";
+import { deleteAudio } from "../services/storage/storageService";
+import { purgeCacheUrls } from "../services/storage/cachePurge";
+import { AudioArtifact } from "../models/AudioArtifact";
 
 const ttsSettingsSchema = z.object({
   model: z.string().optional(),
@@ -88,11 +91,59 @@ export const updatePodcast = asyncHandler(async (req: Request, res: Response) =>
 });
 
 export const deletePodcast = asyncHandler(async (req: Request, res: Response) => {
-  const podcast = await Podcast.findByIdAndDelete(req.params.id);
+  const podcast = await Podcast.findById(req.params.id);
   if (!podcast) throw new ApiError(404, "Podcast not found.");
+
+  // Get all versions first before deleting
+  const versions = await PodcastVersion.find({ podcastId: podcast.id });
+  
+  const urlsToPurge: string[] = [];
+
+  // 1. Delete final audio from B2
+  if (podcast.finalAudio?.url) {
+    const key = extractStorageKey(podcast.finalAudio.url);
+    if (key) {
+      await deleteAudio(key).catch((err) => 
+        console.error(`[podcast] Failed to delete final audio ${key}:`, err)
+      );
+      urlsToPurge.push(podcast.finalAudio.url);
+    }
+  }
+
+  // 2. Delete all block artifacts from B2
+  const artifactIds = new Set<string>();
+  for (const version of versions) {
+    for (const block of version.blocks) {
+      if (block.audioArtifactId) artifactIds.add(block.audioArtifactId);
+    }
+  }
+
+  for (const artifactId of artifactIds) {
+    const artifact = await AudioArtifact.findById(artifactId);
+    if (artifact) {
+      await deleteAudio(artifact.storageKey).catch((err) =>
+        console.error(`[podcast] Failed to delete artifact ${artifactId}:`, err)
+      );
+      urlsToPurge.push(artifact.audioUrl);
+      await artifact.deleteOne();
+    }
+  }
+
+  // 3. Delete from MongoDB
+  await Podcast.findByIdAndDelete(podcast.id);
   await PodcastVersion.deleteMany({ podcastId: podcast.id });
+
+  // 4. Purge Cloudflare cache
+  await purgeCacheUrls(urlsToPurge);
+
   res.status(204).send();
 });
+
+/** Helper function - same as in version.controller.ts */
+function extractStorageKey(url: string): string | null {
+  const match = url.match(/\/(audio\/.+)$/);
+  return match ? match[1] : null;
+}
 
 export const listVersions = asyncHandler(async (req: Request, res: Response) => {
   const versions = await PodcastVersion.find({ podcastId: req.params.id }).sort({ versionNumber: -1 });

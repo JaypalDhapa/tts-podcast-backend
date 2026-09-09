@@ -1,10 +1,17 @@
 import { Podcast, type PodcastDoc } from "../../models/Podcast";
 import { PodcastVersion } from "../../models/PodcastVersion";
 import { AudioArtifact } from "../../models/AudioArtifact";
-import { GenerationJob, type GenerationJobDoc } from "../../models/GenerationJob";
+import {
+  GenerationJob,
+  type GenerationJobDoc,
+} from "../../models/GenerationJob";
 import { hashBlockConfig } from "../hash";
 import { synthesizeBlock } from "../tts/ttsService";
-import { uploadAudio, blockAudioKey, finalAudioKey } from "../storage/storageService";
+import {
+  uploadAudio,
+  blockAudioKey,
+  finalAudioKey,
+} from "../storage/storageService";
 import { concatenateAudio } from "../audio/concat";
 import type { BlockInput } from "../../types/domain";
 
@@ -13,7 +20,11 @@ import type { BlockInput } from "../../types/domain";
  * Mutates the GenerationJob document as it goes so GET /api/generations/:id
  * can report live progress via polling.
  */
-export async function runGeneration(podcastId: string, versionId: string, jobId: string): Promise<void> {
+export async function runGeneration(
+  podcastId: string,
+  versionId: string,
+  jobId: string
+): Promise<void> {
   const job = await GenerationJob.findById(jobId);
   if (!job) return;
 
@@ -49,10 +60,24 @@ export async function runGeneration(podcastId: string, versionId: string, jobId:
     try {
       const result = await resolveBlockAudio(blockData);
       clipBuffers.push(result.buffer);
-      applyBlockResult(podcast, version, block.id, result.status, undefined, result.artifactId, result.audioUrl);
+      applyBlockResult(
+        podcast,
+        version,
+        block.id,
+        result.status,
+        undefined,
+        result.artifactId,
+        result.audioUrl
+      );
     } catch (err) {
       hadFailure = true;
-      applyBlockResult(podcast, version, block.id, "failed", err instanceof Error ? err.message : "Generation failed.");
+      applyBlockResult(
+        podcast,
+        version,
+        block.id,
+        "failed",
+        err instanceof Error ? err.message : "Generation failed."
+      );
     }
 
     job.completedBlocks += 1;
@@ -64,16 +89,24 @@ export async function runGeneration(podcastId: string, versionId: string, jobId:
   await version.save();
 
   if (hadFailure) {
-    await failJob(job, "One or more blocks failed to generate. Fix them and try again.");
+    await failJob(
+      job,
+      "One or more blocks failed to generate. Fix them and try again."
+    );
     version.status = "failed";
     await version.save();
     return;
   }
 
   try {
+    console.log(`[DEBUG] Starting audio concatenation for ${clipBuffers.length} clips...`);
     const { buffer: finalBuffer, duration } = await concatenateAudio(clipBuffers);
+    console.log(`[DEBUG] Audio concatenated successfully. Duration: ${duration}s, Size: ${finalBuffer.length} bytes`);
+    
     const key = finalAudioKey(podcastId, versionId);
+    console.log(`[DEBUG] Uploading final audio to: ${key}`);
     const url = await uploadAudio(key, finalBuffer);
+    console.log(`[DEBUG] Final audio uploaded successfully: ${url}`);
 
     version.finalAudio = { url, duration };
     version.status = "generated";
@@ -89,7 +122,10 @@ export async function runGeneration(podcastId: string, versionId: string, jobId:
     job.completedAt = new Date();
     await job.save();
   } catch (err) {
-    await failJob(job, "Unable to assemble the final podcast audio.");
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    console.error(`[ERROR] Final assembly failed:`, errorMessage);
+    console.error(`[ERROR] Stack trace:`, err instanceof Error ? err.stack : "No stack trace");
+    await failJob(job, `Unable to assemble the final podcast audio: ${errorMessage}`);
     version.status = "failed";
     await version.save();
   }
@@ -103,17 +139,29 @@ export async function runGeneration(podcastId: string, versionId: string, jobId:
  */
 async function resolveBlockAudio(
   block: BlockInput
-): Promise<{ buffer: Buffer; status: "reused" | "generated"; artifactId: string; audioUrl: string }> {
+): Promise<{
+  buffer: Buffer;
+  status: "reused" | "generated";
+  artifactId: string;
+  audioUrl: string;
+}> {
   const hash = hashBlockConfig(block);
   const existing = await AudioArtifact.findOne({ hash });
 
   if (existing) {
     const response = await fetch(existing.audioUrl);
     if (!response.ok) {
-      throw new Error(`Could not fetch existing audio artifact (${response.status}).`);
+      throw new Error(
+        `Could not fetch existing audio artifact (${response.status}).`
+      );
     }
     const buffer = Buffer.from(await response.arrayBuffer());
-    return { buffer, status: "reused", artifactId: existing.id, audioUrl: existing.audioUrl };
+    return {
+      buffer,
+      status: "reused",
+      artifactId: existing.id,
+      audioUrl: existing.audioUrl,
+    };
   }
 
   const { buffer, duration } = await synthesizeBlock({
@@ -161,7 +209,10 @@ function applyBlockResult(
   }
 }
 
-function findBlockStatus(version: InstanceType<typeof PodcastVersion>, blockId: string): string {
+function findBlockStatus(
+  version: InstanceType<typeof PodcastVersion>,
+  blockId: string
+): string {
   const block = (version.blocks as any[]).find((b: any) => b.id === blockId);
   return block?.status ?? "failed";
 }

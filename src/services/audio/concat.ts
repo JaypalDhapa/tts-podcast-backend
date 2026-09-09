@@ -51,18 +51,25 @@ function runFfmpegConcat(inputPaths: string[], outputPath: string, gapSeconds = 
     const command = ffmpeg();
     inputPaths.forEach((p) => command.input(p));
 
-    // Insert `gapSeconds` of silence between each clip (not before the
-    // first or after the last) so blocks don't run into each other.
-    const silenceLabel = "sil";
-    const filterParts = [`aevalsrc=0:d=${gapSeconds}[${silenceLabel}]`];
-
+    // Create separate silence filter for EACH gap between clips
+    const filterParts: string[] = [];
     const segments: string[] = [];
+    
+    // Create silence filters: sil0, sil1, sil2, etc.
+    for (let i = 0; i < inputPaths.length - 1; i++) {
+      filterParts.push(`aevalsrc=0:d=${gapSeconds}[sil${i}]`);
+    }
+
+    // Build concat segments: [0:a][sil0][1:a][sil1][2:a]...[13:a]
     inputPaths.forEach((_, i) => {
       segments.push(`[${i}:a]`);
-      if (i < inputPaths.length - 1) segments.push(`[${silenceLabel}]`);
+      if (i < inputPaths.length - 1) {
+        segments.push(`[sil${i}]`);
+      }
     });
 
-    filterParts.push(`${segments.join("")}concat=n=${segments.length}:v=0:a=1[out]`);
+    const n = segments.length; // Total segments (clips + silences)
+    filterParts.push(`${segments.join("")}concat=n=${n}:v=0:a=1[out]`);
 
     command
       .complexFilter(filterParts.join(";"))
