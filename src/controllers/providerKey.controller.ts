@@ -12,11 +12,17 @@ const createKeySchema = z.object({
   provider: z.enum(["elevenlabs", "cartesia"]),
   apiKey: z.string().min(1),
   label: z.string().optional(),
+  // Cartesia only — required to call their /usage/credits endpoint.
+  adminKey: z.string().min(1).optional(),
+  monthlyCreditLimit: z.number().positive().optional(),
 });
 
 const updateKeySchema = z.object({
   label: z.string().optional(),
   isActive: z.boolean().optional(),
+  // Pass an empty string for adminKey to clear it; omit to leave unchanged.
+  adminKey: z.string().optional(),
+  monthlyCreditLimit: z.number().positive().nullable().optional(),
 });
 
 /** GET /api/provider-keys?provider=cartesia — never returns the actual key. */
@@ -31,7 +37,7 @@ export const createKey = asyncHandler(async (req: Request, res: Response) => {
   const parsed = createKeySchema.safeParse(req.body);
   if (!parsed.success) throw new ApiError(400, "A provider and API key are required.");
 
-  const { provider, apiKey, label } = parsed.data;
+  const { provider, apiKey, label, adminKey, monthlyCreditLimit } = parsed.data;
   const encryptedKey = encryptSecret(apiKey);
 
   const existingCount = await ProviderApiKey.countDocuments({ provider });
@@ -40,17 +46,29 @@ export const createKey = asyncHandler(async (req: Request, res: Response) => {
     encryptedKey,
     label: label?.trim() || `Key ${existingCount + 1}`,
     isActive: true,
+    encryptedAdminKey: provider === "cartesia" && adminKey ? encryptSecret(adminKey) : null,
+    monthlyCreditLimit: provider === "cartesia" ? monthlyCreditLimit ?? null : null,
   });
 
   res.status(201).json(key.toJSON());
 });
 
-/** Enable/disable or relabel a key. Never accepts a new apiKey — delete and re-add instead. */
+/** Enable/disable, relabel, or update Cartesia's admin key / credit limit. Never accepts a new apiKey — delete and re-add instead. */
 export const updateKey = asyncHandler(async (req: Request, res: Response) => {
   const parsed = updateKeySchema.safeParse(req.body);
   if (!parsed.success) throw new ApiError(400, "Invalid update payload.");
 
-  const key = await ProviderApiKey.findByIdAndUpdate(req.params.id, parsed.data, { new: true });
+  const { adminKey, monthlyCreditLimit, ...rest } = parsed.data;
+  const update: Record<string, unknown> = { ...rest };
+
+  if (adminKey !== undefined) {
+    update.encryptedAdminKey = adminKey.trim() ? encryptSecret(adminKey.trim()) : null;
+  }
+  if (monthlyCreditLimit !== undefined) {
+    update.monthlyCreditLimit = monthlyCreditLimit;
+  }
+
+  const key = await ProviderApiKey.findByIdAndUpdate(req.params.id, update, { new: true });
   if (!key) throw new ApiError(404, "API key not found.");
   res.json(key.toJSON());
 });
@@ -66,12 +84,11 @@ export const getKeyCredits = asyncHandler(async (req: Request, res: Response) =>
   const doc = await ProviderApiKey.findById(req.params.id);
   if (!doc) throw new ApiError(404, "API key not found.");
 
-  const apiKey = decryptSecret(doc.encryptedKey);
+  if (doc.provider === "elevenlabs") {
+    const apiKey = decryptSecret(doc.encryptedKey);
+    return res.json(await fetchElevenLabsCredits(apiKey));
+  }
 
-  const credits =
-    doc.provider === "elevenlabs"
-      ? await fetchElevenLabsCredits(apiKey)
-      : await fetchCartesiaCredits(apiKey);
-
-  res.json(credits);
+  const adminApiKey = doc.encryptedAdminKey ? decryptSecret(doc.encryptedAdminKey) : null;
+  res.json(await fetchCartesiaCredits(adminApiKey, doc.monthlyCreditLimit ?? null));
 });

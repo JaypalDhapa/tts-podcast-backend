@@ -11,6 +11,14 @@ const ProviderApiKeySchema = new Schema(
     label: { type: String, default: "" }, // e.g. "Key 1" — display only, never the key itself
     encryptedKey: { type: String, required: true }, // AES-256-GCM, see services/crypto.ts
 
+    // Cartesia only: their /usage/credits endpoint requires a separate admin
+    // key (sk_car_admin_...) — the regular TTS key is rejected on it. Both
+    // are optional so existing ElevenLabs keys are unaffected.
+    encryptedAdminKey: { type: String, default: null },
+    // Cartesia's API reports credits *consumed*, not a plan limit, so the
+    // limit has to be entered manually to compute "remaining".
+    monthlyCreditLimit: { type: Number, default: null },
+
     isActive: { type: Boolean, default: true }, // manual enable/disable
     cooldownUntil: { type: Date, default: null }, // temporary exclusion after a rate-limit hit
     lastUsedAt: { type: Date, default: null }, // drives round-robin selection order
@@ -34,9 +42,11 @@ ProviderApiKeySchema.set("toJSON", {
     if (ret.lastUsedAt) ret.lastUsedAt = ret.lastUsedAt.toISOString();
     if (ret.lastFailureAt) ret.lastFailureAt = ret.lastFailureAt.toISOString();
     if (ret.cooldownUntil) ret.cooldownUntil = ret.cooldownUntil.toISOString();
+    ret.hasAdminKey = !!ret.encryptedAdminKey; // tell the client whether one is set, never the value
     delete ret._id;
     delete ret.__v;
     delete ret.encryptedKey; // never leaves the server, even by accident
+    delete ret.encryptedAdminKey;
     return ret;
   },
 });
