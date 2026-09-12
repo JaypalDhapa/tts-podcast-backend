@@ -16,7 +16,7 @@ export async function synthesizeWithElevenLabs({ apiKey, providerVoiceId, text, 
     similarity_boost: 0.75,
   };
   if (typeof settings.speed === "number") {
-    voiceSettings.speed = clamp(settings.speed, 0.7, 1.2);
+    voiceSettings.speed = toElevenLabsSpeed(settings.speed);
   }
 
   const response = await fetch(url, {
@@ -52,6 +52,18 @@ async function safeReadError(response: Response): Promise<string> {
   }
 }
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
+
+
+// Your app uses a 0.5x–2x multiplier. ElevenLabs only accepts 0.7–1.2.
+// Map the full app range onto ElevenLabs' supported range instead of clamping,
+// so 0.5x and 2x actually produce audibly different results.
+function toElevenLabsSpeed(multiplier: number): number {
+  const clamped = Math.min(2, Math.max(0.5, multiplier));
+  if (clamped === 1) return 1;
+  if (clamped < 1) {
+    // 0.5 -> 0.7
+    return 1 + ((clamped - 1) / 0.5) * 0.3;
+  }
+  // 2.0 -> 1.2
+  return 1 + ((clamped - 1) / 1) * 0.2;
 }
