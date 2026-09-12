@@ -6,10 +6,13 @@ import { TTSProviderError } from "./TTSProviderError";
 import { Voice } from "../../models/Voice";
 import type { TTSProvider, TTSSettings } from "../../types/domain";
 import { ApiError } from "../../utils/apiError";
+import { estimateWords, type Word } from "./wordTimestamps";
 
 export interface SynthesisResult {
   buffer: Buffer;
   duration: number;
+  words: Word[];
+  timingSource: "provider" | "estimated";
 }
 
 const MAX_ATTEMPTS = 3;
@@ -45,14 +48,26 @@ export async function synthesizeBlock(params: {
     console.log(`[TTS] Using ${provider} key ${key.id} (attempt ${attempt}/${MAX_ATTEMPTS})`);
 
     try {
-      const buffer =
+      const result =
         provider === "elevenlabs"
           ? await synthesizeWithElevenLabs({ apiKey: key.apiKey, providerVoiceId: voice.providerVoiceId, text, settings })
           : await synthesizeWithCartesia({ apiKey: key.apiKey, providerVoiceId: voice.providerVoiceId, text, settings });
 
       await reportKeySuccess(key.id);
-      const duration = await probeDuration(buffer);
-      return { buffer, duration };
+      const duration = await probeDuration(result.buffer);
+
+      let words = result.words;
+      let timingSource: "provider" | "estimated" = "provider";
+      if (words.length === 0) {
+        // Provider didn't return usable timestamps for this block (rare).
+        // Fall back to evenly-spaced estimates across the block's real
+        // duration rather than failing the whole generation over it.
+        words = estimateWords(text, Math.round(duration * 1000));
+        timingSource = "estimated";
+        console.warn(`[TTS] ${provider} returned no timestamps; estimating word timing for this block.`);
+      }
+
+      return { buffer: result.buffer, duration, words, timingSource };
     } catch (err) {
       const status = err instanceof TTSProviderError ? err.status : undefined;
       const classification = classifyFailure(status);

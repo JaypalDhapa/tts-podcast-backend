@@ -12,6 +12,7 @@ const PodcastSchema = new Schema(
     finalAudio: {
       url: String,
       duration: Number,
+      transcriptUrl: String,
     },
     isOutOfDate: { type: Boolean, default: false },
   },

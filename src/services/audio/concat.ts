@@ -11,6 +11,15 @@ if (ffmpegPath) {
 }
 
 /**
+ * Silence gap (seconds) inserted between every pair of clips during
+ * concatenation. Exported so the generation runner computes offsets for
+ * the combined word-timestamp timeline using this exact same number —
+ * this constant and the ffmpeg filter below must never be allowed to
+ * disagree.
+ */
+export const CONCAT_GAP_SECONDS = 0.6;
+
+/**
  * Concatenates block audio clips (in order) into a single MP3 buffer.
  * Uses ffmpeg's concat filter (decode + re-encode) rather than the
  * concat demuxer, so it works correctly even when clips came from
@@ -36,7 +45,7 @@ export async function concatenateAudio(buffers: Buffer[]): Promise<{ buffer: Buf
     }
 
     const outputPath = path.join(workDir, `${crypto.randomUUID()}.mp3`);
-    await runFfmpegConcat(inputPaths, outputPath, 0.6);
+    await runFfmpegConcat(inputPaths, outputPath, CONCAT_GAP_SECONDS);
 
     const buffer = await fs.readFile(outputPath);
     const duration = await probeDuration(buffer);
@@ -46,7 +55,7 @@ export async function concatenateAudio(buffers: Buffer[]): Promise<{ buffer: Buf
   }
 }
 
-function runFfmpegConcat(inputPaths: string[], outputPath: string, gapSeconds = 0.6): Promise<void> {
+function runFfmpegConcat(inputPaths: string[], outputPath: string, gapSeconds = CONCAT_GAP_SECONDS): Promise<void> {
   return new Promise((resolve, reject) => {
     const command = ffmpeg();
     inputPaths.forEach((p) => command.input(p));
@@ -54,7 +63,7 @@ function runFfmpegConcat(inputPaths: string[], outputPath: string, gapSeconds = 
     // Create separate silence filter for EACH gap between clips
     const filterParts: string[] = [];
     const segments: string[] = [];
-    
+
     // Create silence filters: sil0, sil1, sil2, etc.
     for (let i = 0; i < inputPaths.length - 1; i++) {
       filterParts.push(`aevalsrc=0:d=${gapSeconds}[sil${i}]`);
@@ -80,6 +89,11 @@ function runFfmpegConcat(inputPaths: string[], outputPath: string, gapSeconds = 
       .on("end", () => resolve())
       .save(outputPath);
   });
+}
+
+export async function probeDurationMs(buffer: Buffer): Promise<number> {
+  const seconds = await probeDuration(buffer);
+  return Math.round(seconds * 1000);
 }
 
 async function probeDuration(buffer: Buffer): Promise<number> {

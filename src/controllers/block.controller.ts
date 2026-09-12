@@ -24,7 +24,8 @@ const previewSchema = z.object({
  * POST /api/blocks/:id/preview
  * Generates audio for exactly one block and reuses the same
  * hash-addressed artifact table full generation uses — previewing a
- * block and then generating the podcast won't synthesize it twice.
+ * block and then generating the podcast won't synthesize it twice, and
+ * the word-level timing captured here is reused too.
  */
 export const previewBlock = asyncHandler(async (req: Request, res: Response) => {
   const parsed = previewSchema.safeParse(req.body);
@@ -40,11 +41,21 @@ export const previewBlock = asyncHandler(async (req: Request, res: Response) => 
     return;
   }
 
-  const { buffer, duration } = await synthesizeBlock({ provider, voiceId, text, settings });
+  const { buffer, duration, words, timingSource } = await synthesizeBlock({ provider, voiceId, text, settings });
   const key = blockAudioKey(hash);
   const audioUrl = await uploadAudio(key, buffer);
 
-  await AudioArtifact.create({ hash, provider, voiceId, storageKey: key, audioUrl, duration, format: "mp3" });
+  await AudioArtifact.create({
+    hash,
+    provider,
+    voiceId,
+    storageKey: key,
+    audioUrl,
+    duration,
+    format: "mp3",
+    words,
+    timingSource,
+  });
 
   res.json({ audioUrl, duration });
 });

@@ -27,6 +27,16 @@ export async function uploadAudio(key: string, buffer: Buffer, contentType = "au
 }
 
 /**
+ * Uploads arbitrary JSON (e.g. the final combined word-timestamp
+ * transcript) using the same durable storage path as audio, so it gets
+ * the same CDN caching and eventual-consistency handling.
+ */
+export async function uploadJson(key: string, data: unknown): Promise<string> {
+  const buffer = Buffer.from(JSON.stringify(data), "utf-8");
+  return uploadAudio(key, buffer, "application/json");
+}
+
+/**
  * B2's S3-compatible read path can lag slightly behind a write
  * (eventual consistency). Poll the public URL with backoff until it's
  * actually fetchable, so the URL handed back to the frontend works on
@@ -66,4 +76,8 @@ export function blockAudioKey(hash: string): string {
 
 export function finalAudioKey(podcastId: string, versionId: string): string {
   return `audio/final/${podcastId}/${versionId}.mp3`;
+}
+
+export function finalTranscriptKey(podcastId: string, versionId: string): string {
+  return `audio/final/${podcastId}/${versionId}.json`;
 }

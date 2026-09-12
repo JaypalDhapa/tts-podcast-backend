@@ -1,5 +1,6 @@
 import type { TTSSettings } from "../../types/domain";
 import { TTSProviderError } from "./TTSProviderError";
+import { wordsFromElevenLabsAlignment, type Word } from "./wordTimestamps";
 
 interface SynthesizeParams {
   apiKey: string;
@@ -8,8 +9,22 @@ interface SynthesizeParams {
   settings: TTSSettings;
 }
 
-export async function synthesizeWithElevenLabs({ apiKey, providerVoiceId, text, settings }: SynthesizeParams): Promise<Buffer> {
-  const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(providerVoiceId)}`;
+export interface ElevenLabsSynthesisResult {
+  buffer: Buffer;
+  words: Word[];
+}
+
+export async function synthesizeWithElevenLabs({
+  apiKey,
+  providerVoiceId,
+  text,
+  settings,
+}: SynthesizeParams): Promise<ElevenLabsSynthesisResult> {
+  // "/with-timestamps" runs the exact same synthesis pipeline as the plain
+  // endpoint, but wraps the audio in a JSON envelope alongside
+  // character-level alignment data. This is the only ElevenLabs endpoint
+  // that gives us timing information at all.
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(providerVoiceId)}/with-timestamps`;
 
   const voiceSettings: Record<string, number | boolean> = {
     stability: 0.5,
@@ -24,7 +39,7 @@ export async function synthesizeWithElevenLabs({ apiKey, providerVoiceId, text, 
     headers: {
       "xi-api-key": apiKey,
       "Content-Type": "application/json",
-      Accept: "audio/mpeg",
+      Accept: "application/json",
     },
     body: JSON.stringify({
       text,
@@ -38,8 +53,32 @@ export async function synthesizeWithElevenLabs({ apiKey, providerVoiceId, text, 
     throw new TTSProviderError(response.status, `ElevenLabs synthesis failed (${response.status}): ${body}`);
   }
 
-  const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  const payload = (await response.json()) as {
+    audio_base64?: string;
+    alignment?: {
+      characters?: string[];
+      character_start_times_seconds?: number[];
+      character_end_times_seconds?: number[];
+    } | null;
+  };
+
+  if (!payload.audio_base64) {
+    throw new TTSProviderError(502, "ElevenLabs response did not include audio data.");
+  }
+
+  const buffer = Buffer.from(payload.audio_base64, "base64");
+
+  const alignment = payload.alignment;
+  const words =
+    alignment?.characters && alignment.character_start_times_seconds && alignment.character_end_times_seconds
+      ? wordsFromElevenLabsAlignment(
+          alignment.characters,
+          alignment.character_start_times_seconds,
+          alignment.character_end_times_seconds
+        )
+      : [];
+
+  return { buffer, words };
 }
 
 async function safeReadError(response: Response): Promise<string> {
@@ -51,8 +90,6 @@ async function safeReadError(response: Response): Promise<string> {
     return raw || response.statusText;
   }
 }
-
-
 
 // Your app uses a 0.5x–2x multiplier. ElevenLabs only accepts 0.7–1.2.
 // Map the full app range onto ElevenLabs' supported range instead of clamping,

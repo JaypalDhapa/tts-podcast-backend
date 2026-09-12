@@ -11,6 +11,7 @@ const PodcastVersionSchema = new Schema(
     finalAudio: {
       url: String,
       duration: Number,
+      transcriptUrl: String,
     },
     status: {
       type: String,

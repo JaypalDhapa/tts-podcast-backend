@@ -31,6 +31,18 @@ export type GenerationStatus = "queued" | "processing" | "completed" | "failed" 
 export interface PodcastAudio {
   url: string;
   duration: number;
+  transcriptUrl?: string;
+}
+
+/**
+ * One word in the final, flattened, globally-offset timeline — exactly
+ * the shape written to the transcript JSON and consumed by the
+ * frontend for subtitles / active-word highlighting.
+ */
+export interface TranscriptWord {
+  word: string;
+  start: number;
+  end: number;
 }
 
 export interface KeyCredits {
