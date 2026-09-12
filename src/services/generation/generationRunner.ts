@@ -15,7 +15,14 @@ import {
   finalTranscriptKey,
 } from "../storage/storageService";
 import { concatenateAudio, probeDurationMs, CONCAT_GAP_SECONDS } from "../audio/concat";
-import { scaleWordsToDuration, offsetWords, toOutputFormat, estimateWords, type Word } from "../tts/wordTimestamps";
+import {
+  scaleWordsToDuration,
+  offsetWords,
+  toOutputFormat,
+  estimateWords,
+  stripEmotionTagWords,
+  type Word,
+} from "../tts/wordTimestamps";
 import type { BlockInput, TranscriptWord } from "../../types/domain";
 
 interface ResolvedBlockAudio {
@@ -223,11 +230,13 @@ async function resolveBlockAudio(block: BlockInput): Promise<ResolvedBlockAudio>
     }
     const buffer = Buffer.from(await response.arrayBuffer());
 
-    let words: Word[] = (existing.words ?? []).map((w) => ({
-      word: w.word,
-      startMs: w.startMs,
-      endMs: w.endMs,
-    }));
+    let words: Word[] = stripEmotionTagWords(
+      (existing.words ?? []).map((w) => ({
+        word: w.word,
+        startMs: w.startMs,
+        endMs: w.endMs,
+      }))
+    );
     let timingSource: "provider" | "estimated" = (existing.timingSource as "provider" | "estimated") ?? "provider";
 
     if (words.length === 0) {
