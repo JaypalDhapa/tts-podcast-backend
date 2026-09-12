@@ -18,14 +18,14 @@ export interface CartesiaSynthesisResult {
 const SAMPLE_RATE = 44100;
 const ENCODING = "pcm_s16le";
 
-// Your app uses a 0.5x–2x multiplier. Cartesia's __experimental_controls.speed
-// expects a number from -1.0 (slowest) to 1.0 (fastest), where 0 = normal (1x).
+// Your app uses a 0.5x–2x multiplier. Cartesia's generation_config.speed
+// expects a number from 0.6 (slowest) to 1.5 (fastest), where 1.0 = normal.
 function toCartesiaSpeed(multiplier?: number): number | undefined {
   if (typeof multiplier !== "number" || Number.isNaN(multiplier)) return undefined;
   const clamped = Math.min(2, Math.max(0.5, multiplier));
-  if (clamped === 1) return 0;
-  if (clamped < 1) return (clamped - 1) / 0.5; // 0.5 -> -1
-  return (clamped - 1) / 1;                    // 2.0 -> 1
+  if (clamped === 1) return 1;
+  if (clamped < 1) return 1 + ((clamped - 1) / 0.5) * 0.4; // 0.5 -> 0.6
+  return 1 + ((clamped - 1) / 1) * 0.5;                    // 2.0 -> 1.5
 }
 
 type CartesiaSSEEvent =
@@ -47,9 +47,9 @@ export async function synthesizeWithCartesia({
     mode: "id",
     id: providerVoiceId,
   };
-  if (cartesiaSpeed !== undefined) {
-    voice.__experimental_controls = { speed: cartesiaSpeed };
-  }
+
+  const generationConfig: Record<string, unknown> | undefined =
+    cartesiaSpeed !== undefined ? { speed: cartesiaSpeed } : undefined;
 
   // SSE only supports "raw" output — mp3/wav containers are Bytes-only.
   // We ask for raw PCM here and transcode to mp3 ourselves below.
@@ -72,6 +72,7 @@ export async function synthesizeWithCartesia({
         encoding: ENCODING,
         sample_rate: SAMPLE_RATE,
       },
+      ...(generationConfig ? { generation_config: generationConfig } : {}),
     }),
   });
 

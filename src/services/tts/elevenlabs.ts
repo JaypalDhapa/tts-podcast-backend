@@ -30,8 +30,19 @@ export async function synthesizeWithElevenLabs({
     stability: 0.5,
     similarity_boost: 0.75,
   };
-  if (typeof settings.speed === "number") {
-    voiceSettings.speed = toElevenLabsSpeed(settings.speed);
+
+  // eleven_v3 (our default) ignores voice_settings.speed entirely — it's
+  // not a bug on our end, ElevenLabs' API silently drops it for that
+  // model. Rather than force everyone onto a different model just to get
+  // a working slider, only swap models for the blocks that actually ask
+  // for a non-default speed. Untouched sliders (or anything within
+  // floating-point rounding of 1.0) stay on eleven_v3 as configured.
+  const wantsSpeedControl = typeof settings.speed === "number" && Math.abs(settings.speed - 1) > 0.001;
+  const requestedModel = settings.model || "eleven_v3";
+  const modelId = wantsSpeedControl && requestedModel === "eleven_v3" ? "eleven_multilingual_v2" : requestedModel;
+
+  if (wantsSpeedControl) {
+    voiceSettings.speed = toElevenLabsSpeed(settings.speed as number);
   }
 
   const response = await fetch(url, {
@@ -43,7 +54,7 @@ export async function synthesizeWithElevenLabs({
     },
     body: JSON.stringify({
       text,
-      model_id: settings.model || "eleven_v3",
+      model_id: modelId,
       voice_settings: voiceSettings,
     }),
   });
