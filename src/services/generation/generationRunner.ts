@@ -1,7 +1,6 @@
 import { Podcast, type PodcastDoc } from "../../models/Podcast";
 import { PodcastVersion } from "../../models/PodcastVersion";
 import { AudioArtifact } from "../../models/AudioArtifact";
-import { saveTranscriptLocally } from "../storage/localDebugStorage";
 import {
   GenerationJob,
   type GenerationJobDoc,
@@ -81,9 +80,6 @@ export async function runGeneration(
       const result = await resolveBlockAudio(blockData);
       clipBuffers.push(result.buffer);
 
-      // Measured on the exact buffer that will go into ffmpeg — this,
-      // not any provider-reported number, is what the final offset math
-      // is anchored to.
       const actualDurationMs = await probeDurationMs(result.buffer);
       blockTimings.push({
         order: block.order,
@@ -130,21 +126,14 @@ export async function runGeneration(
   }
 
   try {
-    console.log(`[DEBUG] Starting audio concatenation for ${clipBuffers.length} clips...`);
     const { buffer: finalBuffer, duration } = await concatenateAudio(clipBuffers);
-    console.log(`[DEBUG] Audio concatenated successfully. Duration: ${duration}s, Size: ${finalBuffer.length} bytes`);
 
     const key = finalAudioKey(podcastId, versionId);
-    console.log(`[DEBUG] Uploading final audio to: ${key}`);
     const url = await uploadAudio(key, finalBuffer);
-    console.log(`[DEBUG] Final audio uploaded successfully: ${url}`);
 
     const transcript = buildTranscript(blockTimings, CONCAT_GAP_SECONDS, duration);
-    await saveTranscriptLocally(podcastId, versionId, transcript);
     const transcriptKey = finalTranscriptKey(podcastId, versionId);
-    console.log(`[DEBUG] Uploading final transcript to: ${transcriptKey}`);
     const transcriptUrl = await uploadJson(transcriptKey, transcript);
-    console.log(`[DEBUG] Final transcript uploaded successfully: ${transcriptUrl}`);
 
     version.finalAudio = { url, duration, transcriptUrl };
     version.status = "generated";
@@ -161,8 +150,6 @@ export async function runGeneration(
     await job.save();
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
-    console.error(`[ERROR] Final assembly failed:`, errorMessage);
-    console.error(`[ERROR] Stack trace:`, err instanceof Error ? err.stack : "No stack trace");
     await failJob(job, `Unable to assemble the final podcast audio: ${errorMessage}`);
     version.status = "failed";
     await version.save();
@@ -172,15 +159,10 @@ export async function runGeneration(
 /**
  * Combines every block's own (already duration-scaled) word timeline
  * into one flat, globally-offset array — the exact shape the frontend
- * consumes.
- *
- * Blocks are processed in `order`, never array/generation order. Each
- * block's offset is the running sum of every prior block's *actual*
- * audio duration plus the fixed silence gap concat.ts inserts between
- * clips — the same constant concat.ts itself uses, so this can never
- * drift out of sync with the real audio. Works identically whether
- * there's one block or fifty; no special-casing needed for a single
- * clip (no gap ever gets added because there's no "next" block).
+ * consumes. Blocks are processed in `order`, never array/generation
+ * order. Each block's offset is the running sum of every prior block's
+ * actual audio duration plus the fixed silence gap concat.ts inserts
+ * between clips.
  */
 function buildTranscript(
   blockTimings: BlockTimingRecord[],
@@ -202,12 +184,10 @@ function buildTranscript(
 }
 
 /**
- * Final safety net: if the merged timeline's last word doesn't line up
- * with the actually-probed duration of the final concatenated file
- * (beyond a small tolerance), clamp rather than let the frontend seek
- * past the end of the audio. This should rarely trigger — if it does,
- * the warning is the signal that the offset math needs another look,
- * not something to silently ignore.
+ * Safety net: if the merged timeline's last word doesn't line up with
+ * the actually-probed duration of the final concatenated file (beyond a
+ * small tolerance), clamp rather than let the frontend seek past the
+ * end of the audio.
  */
 function reconcileWithFinalDuration(words: TranscriptWord[], finalDurationSeconds: number): TranscriptWord[] {
   if (words.length === 0) return words;
@@ -217,10 +197,6 @@ function reconcileWithFinalDuration(words: TranscriptWord[], finalDurationSecond
   const lastEndMs = Math.round(words[words.length - 1].end * 1000);
 
   if (Math.abs(lastEndMs - finalMs) <= toleranceMs) return words;
-
-  console.warn(
-    `[Transcript] Final word timing (${lastEndMs}ms) drifted from actual audio duration (${finalMs}ms) by ${lastEndMs - finalMs}ms — clamping.`
-  );
 
   const finalSeconds = finalMs / 1000;
   return words.map((w) => ({
@@ -232,9 +208,7 @@ function reconcileWithFinalDuration(words: TranscriptWord[], finalDurationSecond
 
 /**
  * For one block: compute its hash, reuse a matching artifact if one
- * exists, otherwise call the TTS provider and store a new one. Either
- * way, returns the raw audio bytes (needed for final assembly) and its
- * word-level timing, whether reused or freshly generated.
+ * exists, otherwise call the TTS provider and store a new one.
  */
 async function resolveBlockAudio(block: BlockInput): Promise<ResolvedBlockAudio> {
   const hash = hashBlockConfig(block);
@@ -257,10 +231,6 @@ async function resolveBlockAudio(block: BlockInput): Promise<ResolvedBlockAudio>
     let timingSource: "provider" | "estimated" = (existing.timingSource as "provider" | "estimated") ?? "provider";
 
     if (words.length === 0) {
-      // Artifact predates word-timestamp support — backfill an estimate
-      // now rather than silently leaving a gap in the transcript, and
-      // persist it so future reuses of this exact artifact don't repeat
-      // the estimate.
       const durationMs = await probeDurationMs(buffer);
       words = estimateWords(block.text, durationMs);
       timingSource = "estimated";

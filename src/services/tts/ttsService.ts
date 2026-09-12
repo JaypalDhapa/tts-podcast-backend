@@ -41,11 +41,7 @@ export async function synthesizeBlock(params: {
   let lastErrorMessage = "Unknown error.";
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-    // Throws ApiError(422, ...) immediately if the pool has nothing
-    // available — that's not worth retrying, so let it propagate.
     const key = await acquireKey(provider, excludeIds);
-
-    console.log(`[TTS] Using ${provider} key ${key.id} (attempt ${attempt}/${MAX_ATTEMPTS})`);
 
     try {
       const result =
@@ -59,12 +55,8 @@ export async function synthesizeBlock(params: {
       let words = result.words;
       let timingSource: "provider" | "estimated" = "provider";
       if (words.length === 0) {
-        // Provider didn't return usable timestamps for this block (rare).
-        // Fall back to evenly-spaced estimates across the block's real
-        // duration rather than failing the whole generation over it.
         words = estimateWords(text, Math.round(duration * 1000));
         timingSource = "estimated";
-        console.warn(`[TTS] ${provider} returned no timestamps; estimating word timing for this block.`);
       }
 
       return { buffer: result.buffer, duration, words, timingSource };
@@ -73,14 +65,9 @@ export async function synthesizeBlock(params: {
       const classification = classifyFailure(status);
       const message = err instanceof Error ? err.message : "Synthesis failed.";
 
-      console.error(`[TTS] Failed on ${provider} key ${key.id}:`, message);
       await reportKeyFailure(key.id, classification, message);
       excludeIds.push(key.id);
       lastErrorMessage = message;
-
-      // An invalid/expired key is worth retrying with a different one;
-      // so is a rate limit or a transient error. We just cap how many
-      // times we'll try before giving up.
     }
   }
 

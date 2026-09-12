@@ -115,3 +115,28 @@ function extractStorageKey(url: string): string | null {
   const match = url.match(/\/(audio\/.+)$/);
   return match ? match[1] : null;
 }
+
+/**
+ * GET /api/versions/:id/transcript — proxies the version's stored
+ * transcript JSON with a download-friendly filename, so the frontend
+ * can offer a plain "Download transcript" link/button instead of
+ * linking straight to the CDN object.
+ */
+export const downloadVersionTranscript = asyncHandler(async (req: Request, res: Response) => {
+  const version = await PodcastVersion.findById(req.params.id);
+  if (!version) throw new ApiError(404, "Version not found.");
+  if (!version.finalAudio?.transcriptUrl) {
+    throw new ApiError(404, "This version doesn't have a transcript yet.");
+  }
+
+  const response = await fetch(version.finalAudio.transcriptUrl);
+  if (!response.ok) {
+    throw new ApiError(502, "Could not fetch the transcript file.");
+  }
+
+  const json = await response.text();
+
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Content-Disposition", `attachment; filename="transcript-${version.id}.json"`);
+  res.send(json);
+});
