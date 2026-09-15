@@ -8,6 +8,7 @@ const VoiceSchema = new Schema(
     language: { type: String, default: "en" },
     gender: { type: String, enum: ["male", "female", "other"] },
     isDefault: { type: Boolean, default: false },
+    defaultSpeed: { type: Number, default: 1.0, min: 0.5, max: 2.0 },
   },
   { timestamps: false }
 );

@@ -10,6 +10,7 @@ const createVoiceSchema = z.object({
   providerVoiceId: z.string().min(1),
   gender: z.enum(["male", "female", "other"]).optional(),
   language: z.string().optional(),
+  defaultSpeed: z.number().min(0.5).max(2.0).optional(),
 });
 
 const updateVoiceSchema = createVoiceSchema.partial();
